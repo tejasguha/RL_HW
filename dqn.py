@@ -3,6 +3,7 @@
 import argparse
 import collections
 import random
+import os
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
@@ -306,6 +307,9 @@ def main():
     name = "DQN"
     if args.double_dqn:
         name = "Double DQN"
+
+    
+    os.makedirs("./graphs/", exist_ok=True)
 
     graph_agents(
         graph_name=name,
