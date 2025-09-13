@@ -32,11 +32,11 @@ class ReplayMemory():
         states, actions, rewards, next_states, dones = zip(*batch)
 
         return (
-            torch.tensor(states, dtype = torch.float32),
-            torch.tensor(actions, dtype = torch.float32),
-            torch.tensor(rewards, dtype = torch.float32),
-            torch.tensor(next_states, dtype = torch.float32),
-            torch.tensor(dones, dtype = torch.float32),
+            torch.tensor(np.array(states), dtype = torch.float32),
+            torch.tensor(np.array(actions), dtype = torch.int64),
+            torch.tensor(np.array(rewards), dtype = torch.float32),
+            torch.tensor(np.array(next_states), dtype = torch.float32),
+            torch.tensor(np.array(dones), dtype = torch.float32),
         )
         # END STUDENT SOLUTION
         pass
@@ -52,7 +52,7 @@ class ReplayMemory():
 
 
 class DeepQNetwork(nn.Module):
-    def __init__(self, env, state_size, action_size, double_dqn, lr_q_net=2e-4, gamma=0.99, epsilon=0.05, target_update=50, burn_in=10000, replay_buffer_size=50000, replay_buffer_batch_size=32, device='cpu'):
+    def __init__(self, state_size, action_size, double_dqn, lr_q_net=2e-4, gamma=0.99, epsilon=0.05, target_update=50, burn_in=10000, replay_buffer_size=50000, replay_buffer_batch_size=32, device='cpu'):
         super(DeepQNetwork, self).__init__()
 
         # define init params
@@ -137,6 +137,13 @@ class DeepQNetwork(nn.Module):
             state = next_state if not done else env.reset()[0]
     
     def train(self, states, actions, rewards, next_states, dones):
+
+        states = states.to(self.device)
+        actions = actions.to(self.device)
+        rewards = rewards.to(self.device)
+        next_states = next_states.to(self.device)
+        dones = dones.to(self.device)
+
         # curr q vals
         q_values = self.q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
@@ -151,31 +158,90 @@ class DeepQNetwork(nn.Module):
         loss.backward()
         self.optimizer.step()
 
-        # update target network
+        # update target network every target update gradient steps
         self.steps += 1
         if self.steps % self.target_update == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
     
-    def run(self, env, max_steps,):
-        state, _ = env.reset()
-        for _ in range(max_steps):
-            action = self.get_action(state, stochastic=False)
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            self.replay_buffer.append((state, action, reward, next_state, done))
-            state = next_state if not done else env.reset()[0]
+    def run(self, env, max_steps, num_episodes, train):
+
+        episode_rewards = []
+
+        # find rewards throughout each episode
+        for ep in range(num_episodes):
+            state, _ = env.reset()
+            total_episode_reward = 0
+
+            # iterate for at most max steps in each episode
+            for _ in range(max_steps):
+                action = self.get_action(state, stochastic=False)
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                done = terminated or truncated
+                total_episode_reward += reward
+
+                # if training episode add time step to replay buffer and
+                # pick random batch of time steps from replay buffer to update
+                # DQN
+
+                if train:
+                    self.replay_buffer.append((state, action, reward, next_state, done))
+                    states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch()
+                    self.train(states, actions, rewards, next_states, dones)
+
+                # update state once time step finished
+                state = next_state if not done else env.reset()[0]
+
+                # leave episode if reached terminal state early
+                if done:
+                    break
+            
+            if train:
+                print(f'Train {ep}: total reward of {total_episode_reward}')
+            else:
+                print(f'Test {ep}: total reward of {total_episode_reward}')
+            
+            episode_rewards.append(total_episode_reward)
+        
+        return episode_rewards
 
 
 
 
 
 def graph_agents(
-    graph_name, mean_undiscounted_returns, test_frequency, max_steps, num_episodes
+    graph_name, agents, env, 
+    test_frequency, max_steps, num_episodes
 ):
     print(f'Starting: {graph_name}')
 
     # graph the data mentioned in the homework pdf
     # BEGIN STUDENT SOLUTION
+    num_trials = len(agents)
+    num_snapshots = int(num_episodes / test_frequency)
+    mean_undiscounted_returns = np.zeros((num_trials, num_snapshots))
+
+    for trial_idx, agent in enumerate(agents):
+
+        print(f'AGENT {trial_idx}')
+
+        # add in initial experience into replay buffer
+        agent.populate_replay_buffer(env)
+
+        for snapshot_idx in range(num_snapshots):
+
+            print(f'SNAPSHOT NUM {snapshot_idx}')
+
+            agent.run(env, max_steps, test_frequency, True)
+
+            # get the average undiscounted reward for the 20 test episodes
+            undiscounted_returns_episode = agent.run(env, max_steps, 20, False)
+            mean_undiscounted_returns[trial_idx, snapshot_idx] = np.mean(undiscounted_returns_episode)
+
+            print(f'AVG RETURN: {np.mean(undiscounted_returns_episode)}')
+
+    average_total_rewards = mean_undiscounted_returns.mean(axis=0)
+    max_total_rewards = mean_undiscounted_returns.max(axis=0)
+    min_total_rewards = mean_undiscounted_returns.min(axis=0)
     # END STUDENT SOLUTION
 
     # plot the total rewards
@@ -241,15 +307,14 @@ def main():
     if args.double_dqn:
         name = "Double DQN"
 
-    # graph_agents(
-    #     graph_name=name,
-    #     agents=agents,
-    #     env=env,
-    #     max_steps=args.max_steps,
-    #     num_episodes=args.num_episodes,
-    #     num_test_episodes=args.num_test_episodes,
-    #     graph_every=args.graph_every
-    # )
+    graph_agents(
+        graph_name=name,
+        agents=agents,
+        env=env,
+        test_frequency=args.test_frequency,
+        max_steps=args.max_steps,
+        num_episodes=args.num_episodes,
+    )
 
     # END STUDENT SOLUTION
 
