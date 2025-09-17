@@ -101,15 +101,16 @@ class DeepQNetwork(nn.Module):
         # calculate q value and target
         # use the correct network for the target based on self.double_dqn
         # BEGIN STUDENT SOLUTION
-        state = torch.tensor(state, dtype=torch.float32).to(self.device).unsqueeze(0)
-        next_state = torch.tensor(new_state, dtype=torch.float32).to(self.device).unsqueeze(0)
 
+        #state = torch.tensor(state, dtype=torch.float32).to(self.device).unsqueeze(0)
+        #next_state = torch.tensor(new_state, dtype=torch.float32).to(self.device).unsqueeze(0)
         q_values = self.q_net(state)
         with torch.no_grad():
             if not self.double_dqn:
-                next_q = torch.max(self.target_net(next_state), dim=1)[0]           
-
-            
+                next_q = self.q_net(new_state)
+            else:
+                next_q = self.target_net(new_state)
+        
         return q_values, next_q
     
         # END STUDENT SOLUTION
@@ -151,16 +152,17 @@ class DeepQNetwork(nn.Module):
         dones = dones.to(self.device)
 
         # curr q vals
-        q_values = self.q_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        q_values, next_q_vals = self.forward(states, next_states)
+        q_values = q_values.squeeze(0).gather(1, actions.unsqueeze(1)).squeeze(-1)
 
         # computing targets
         with torch.no_grad():
+            
             if not self.double_dqn:
-                next_q_vals = self.q_net(next_states).max(1)[0]
+                next_q_vals = next_q_vals.squeeze(0).max(1)[0]
             
             elif self.double_dqn:
-                next_q_vals = torch.gather(self.target_net(next_states),1,self.q_net(next_states).argmax(1,keepdim=True)).squeeze(-1)
-
+                next_q_vals = torch.gather(next_q_vals, 1, self.q_net(next_states).argmax(1,keepdim=True)).squeeze(-1)
             
             
             targets = rewards + self.gamma * next_q_vals * (1 - dones)
