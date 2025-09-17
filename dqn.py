@@ -121,6 +121,10 @@ class DeepQNetwork(nn.Module):
             random_val = random.random()
             if random_val < self.epsilon:
                 return random.randint(0, self.action_size - 1)
+            else:
+                with torch.no_grad():
+                    return torch.argmax(self.q_net(state)).item()
+
         else:
             with torch.no_grad():
                 return torch.argmax(self.q_net(state)).item()
@@ -175,7 +179,9 @@ class DeepQNetwork(nn.Module):
 
             # iterate for at most max steps in each episode
             for _ in range(max_steps):
-                action = self.get_action(state, stochastic=False)
+
+                action = self.get_action(state, stochastic=train)
+                
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
                 total_episode_reward += reward
