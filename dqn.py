@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-
+import tqdm
 
 
 class ReplayMemory():
@@ -77,8 +77,6 @@ class DeepQNetwork(nn.Module):
             nn.Linear(state_size, hidden_layer_size),
             nn.ReLU(),
             # BEGIN STUDENT SOLUTION
-            nn.Linear(hidden_layer_size, hidden_layer_size),
-            nn.ReLU(),
             nn.Linear(hidden_layer_size, action_size)
             # END STUDENT SOLUTION
         )
@@ -86,6 +84,7 @@ class DeepQNetwork(nn.Module):
         # initialize replay buffer, networks, optimizer, move networks to device
         # BEGIN STUDENT SOLUTION
         self.q_net = q_net_init().to(device)
+
         self.target_net = q_net_init().to(device)
         self.target_net.load_state_dict(self.q_net.state_dict())
         self.target_net.eval()
@@ -108,7 +107,9 @@ class DeepQNetwork(nn.Module):
         q_values = self.q_net(state)
         with torch.no_grad():
             if not self.double_dqn:
-                next_q = torch.max(self.target_net(next_state), dim=1)[0]
+                next_q = torch.max(self.target_net(next_state), dim=1)[0]           
+
+            
         return q_values, next_q
     
         # END STUDENT SOLUTION
@@ -155,7 +156,13 @@ class DeepQNetwork(nn.Module):
         # computing targets
         with torch.no_grad():
             if not self.double_dqn:
-                next_q_vals = self.target_net(next_states).max(1)[0]
+                next_q_vals = self.q_net(next_states).max(1)[0]
+            
+            elif self.double_dqn:
+                next_q_vals = torch.gather(self.target_net(next_states),1,self.q_net(next_states).argmax(1,keepdim=True)).squeeze(-1)
+
+            
+            
             targets = rewards + self.gamma * next_q_vals * (1 - dones)
         
         loss = F.mse_loss(q_values, targets)
@@ -167,7 +174,7 @@ class DeepQNetwork(nn.Module):
         self.steps += 1
         if self.steps % self.target_update == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
-    
+
     def run(self, env, max_steps, num_episodes, train):
 
         episode_rewards = []
@@ -178,12 +185,14 @@ class DeepQNetwork(nn.Module):
             total_episode_reward = 0
 
             # iterate for at most max steps in each episode
-            for _ in range(max_steps):
+            for stepc in range(max_steps):
+
 
                 action = self.get_action(state, stochastic=train)
                 
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
+
                 total_episode_reward += reward
 
                 # if training episode add time step to replay buffer and
@@ -202,10 +211,10 @@ class DeepQNetwork(nn.Module):
                 if done:
                     break
             
-            if train:
-                print(f'Train {ep}: total reward of {total_episode_reward}')
-            else:
-                print(f'Test {ep}: total reward of {total_episode_reward}')
+            # if train:
+            #     print(f'Train {ep}: total reward of {total_episode_reward}')
+            # else:
+            #     print(f'Test {ep}: total reward of {total_episode_reward}')
             
             episode_rewards.append(total_episode_reward)
         
@@ -234,7 +243,7 @@ def graph_agents(
         # add in initial experience into replay buffer
         agent.populate_replay_buffer(env)
 
-        for snapshot_idx in range(num_snapshots):
+        for snapshot_idx in tqdm.tqdm(list(range(num_snapshots))):
 
             print(f'SNAPSHOT NUM {snapshot_idx}')
 
@@ -293,10 +302,9 @@ def main():
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
 
-    # CHANGE LATER
-    args.double_dqn = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda"
     print(f"Device: {device}")
 
     agents = []
@@ -312,6 +320,7 @@ def main():
 
     name = "DQN"
     if args.double_dqn:
+        print("DDDQNN")
         name = "Double DQN"
 
     
