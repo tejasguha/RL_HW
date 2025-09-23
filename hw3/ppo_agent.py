@@ -156,6 +156,10 @@ class PPOAgent:
         # ---------------- Problem 1.1.1: PPO Clipped Surrogate Objective Loss ----------------
         ### BEGIN STUDENT SOLUTION - 1.1.1 ###
 
+        ratio = log_probs / old_log_probs
+        ratio_clipped = ratio.clip(min=1-self.clip_coef, max=1+self.clip_coef)
+        total_loss = torch.minimum(ratio*advantages, ratio_clipped*advantages).mean()
+
         ### END STUDENT SOLUTION - 1.1.1 ###
         
         
@@ -168,6 +172,11 @@ class PPOAgent:
 
         # ---------------- Problem 1.1.2: PPO Total Loss (Include Entropy Bonus and Value Loss) ----------------
         ### BEGIN STUDENT SOLUTION - 1.1.2 ###
+
+        value_loss = self.vf_coef*((values - returns)**2).mean()
+        entropy_loss = -self.ent_coef*entropy.mean()
+        total_loss += -value_loss + entropy_loss
+        total_loss = -total_loss # remember obj in paper is maximization, here we are doing min
 
         ### END STUDENT SOLUTION - 1.1.2 ###
 
