@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from buffer import Buffer
 from policies import ActorCritic
 
+import time
+
 class PPOAgent:
     def __init__(self, env_info, lr=3e-4, gamma=0.99, gae_lambda=0.95, 
                  clip_coef=0.2, vf_coef=0.5, ent_coef=0.0, max_grad_norm=0.5,
@@ -76,6 +78,40 @@ class PPOAgent:
         # ---------------- Problem 1.3.1: PPO Update ----------------
         ### BEGIN STUDENT SOLUTION - 1.3.1 ###
 
+        if stop and len(self._curr_policy_rollout) > 0:
+            #start_time = time.perf_counter()
+            advantages, returns = self._compute_gae(self._curr_policy_rollout)
+            #end_time = time.perf_counter()
+            #elapsed_time = end_time - start_time
+            #print(f"GAE COMP: {elapsed_time:.4f} seconds")
+
+            #start_time = time.perf_counter()
+            batch = self._prepare_batch(advantages, returns) # storing processed rollout in buffer
+            #end_time = time.perf_counter()
+            #elapsed_time = end_time - start_time
+            #print(f"PREPPING: {elapsed_time:.4f} seconds")
+
+            #for i in batch.values():
+            #    print(i.device)
+            #start_time = time.perf_counter()
+            self._rollout_buffer.add_batch(batch)
+            #end_time = time.perf_counter()
+            #elapsed_time = end_time - start_time
+            #print(f"ADDING TO BATCH: {elapsed_time:.4f} seconds")
+            
+
+            self._curr_policy_rollout = [] # resetting temp rollout storage
+        
+        if self._steps_collected_with_curr_policy == self.rollout_steps:
+            #start_time = time.perf_counter()
+            ret = self._perform_update()
+            #end_time = time.perf_counter()
+            #elapsed_time = end_time - start_time
+            #print(f"POLICY UPDATE: {elapsed_time:.4f} seconds")
+
+            self._steps_collected_with_curr_policy = 0
+            self._policy_iteration += 1
+
         ### END STUDENT SOLUTION - 1.3.1 ###
 
         return ret  # Leave this as an empty dictionary if no update is performed
@@ -90,6 +126,23 @@ class PPOAgent:
         
         # ---------------- Problem 1.3.2: PPO Update ----------------
         ### BEGIN STUDENT SOLUTION - 1.3.2 ###
+
+        n_updates_per_epoch = int(self.rollout_steps / self.minibatch_size)        
+
+        for _ in range(self.update_epochs):
+            for _ in range(n_updates_per_epoch):
+                minibatch = self._rollout_buffer.sample(self.minibatch_size, {"iteration": [self._policy_iteration]})
+                minibatch['advantages'] = (minibatch['advantages'] - minibatch['advantages'].mean())/(minibatch['advantages'].std() + 1e-8)
+                loss, stats = self._ppo_loss(minibatch)
+                all_stats.append(stats)
+
+                # doing gradient update
+                self.optimizer.zero_grad() # clear grads for next iteration
+                loss.backward() # compute grads
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                self.optimizer.step() # update weights
+            
+
 
         ### EXPERIMENT 1.6 CODE ###
 
@@ -125,7 +178,17 @@ class PPOAgent:
 
         # ---------------- Problem 1.2: Compute GAE ----------------
         ### BEGIN STUDENT SOLUTION - 1.2 ###
+
+        advantages[T-1] = rewards[T-1] + self.gamma*(1 - dones[T-1])*final_v - values[T-1]
         
+        for i in range(T-2, -1, -1):
+            #td = rewards[i] + self.gamma*(1 - dones[i])*values[i+1] - values[i]
+            td = rewards[i] + self.gamma*values[i+1] - values[i]
+            advantages[i] = td + self.gamma*self.gae_lambda*advantages[i+1]
+            #advantages[i] = td + (1 - dones[i]) * self.gamma*self.gae_lambda*advantages[i+1]
+        
+        returns = advantages + values
+
         ### END STUDENT SOLUTION - 1.2 ###
         
         return advantages, returns
@@ -156,9 +219,9 @@ class PPOAgent:
         # ---------------- Problem 1.1.1: PPO Clipped Surrogate Objective Loss ----------------
         ### BEGIN STUDENT SOLUTION - 1.1.1 ###
 
-        ratio = log_probs / old_log_probs
-        ratio_clipped = ratio.clip(min=1-self.clip_coef, max=1+self.clip_coef)
-        total_loss = torch.minimum(ratio*advantages, ratio_clipped*advantages).mean()
+        ratio = torch.exp(log_probs - old_log_probs)
+        ratio_clipped = torch.clamp(ratio, min=1-self.clip_coef, max=1+self.clip_coef)
+        policy_loss = -1 * torch.minimum(ratio*advantages, ratio_clipped*advantages).mean() # min obj in pytorch
 
         ### END STUDENT SOLUTION - 1.1.1 ###
         
@@ -173,10 +236,9 @@ class PPOAgent:
         # ---------------- Problem 1.1.2: PPO Total Loss (Include Entropy Bonus and Value Loss) ----------------
         ### BEGIN STUDENT SOLUTION - 1.1.2 ###
 
-        value_loss = self.vf_coef*((values - returns)**2).mean()
-        entropy_loss = -self.ent_coef*entropy.mean()
-        total_loss += -value_loss + entropy_loss
-        total_loss = -total_loss # remember obj in paper is maximization, here we are doing min
+        value_loss = ((values - returns)**2).mean() # keeping it positive for debugging (changed sign for total loss)
+        entropy_loss = -1 * entropy.mean() # min obj in pytorch
+        total_loss = policy_loss + self.vf_coef*value_loss + self.ent_coef*entropy_loss
 
         ### END STUDENT SOLUTION - 1.1.2 ###
 

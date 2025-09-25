@@ -56,7 +56,7 @@ def evaluate_policy(agent, env_id="LunarLanderContinuous-v3", episodes=10, seed=
         done = truncated = False
         ep_r = 0.0
         while not (done or truncated):
-            obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+            obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).to(agent.device)
             
             # Get the policy/actor from agent
             if hasattr(agent, 'actor'):
@@ -66,7 +66,7 @@ def evaluate_policy(agent, env_id="LunarLanderContinuous-v3", episodes=10, seed=
             else:
                 raise ValueError(f"Agent {type(agent)} has no 'actor' or 'policy' attribute")
                 
-            a = greedy_action(policy, obs_t)
+            a = greedy_action(policy, obs_t).to("cpu")
             a_env = _to_env_action(env, a)
             obs, r, done, truncated, _ = env.step(a_env)
             ep_r += r
@@ -88,7 +88,7 @@ def record_eval_video(agent, video_dir="videos", video_name="eval",
         obs, _ = env.reset()
         done = truncated = False
         while not (done or truncated):
-            obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+            obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0).to(agent.device)
             
             # Get the policy/actor from agent
             if hasattr(agent, 'actor'):
@@ -98,7 +98,7 @@ def record_eval_video(agent, video_dir="videos", video_name="eval",
             else:
                 raise ValueError(f"Agent {type(agent)} has no 'actor' or 'policy' attribute")
                 
-            a = greedy_action(policy, obs_t)
+            a = greedy_action(policy, obs_t).to("cpu")
             a_env = _to_env_action(env, a)
             obs, _, done, truncated, _ = env.step(a_env)
     
