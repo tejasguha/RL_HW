@@ -78,37 +78,14 @@ class PPOAgent:
         # ---------------- Problem 1.3.1: PPO Update ----------------
         ### BEGIN STUDENT SOLUTION - 1.3.1 ###
 
-        if stop and len(self._curr_policy_rollout) > 0:
-            #start_time = time.perf_counter()
+        if stop:
             advantages, returns = self._compute_gae(self._curr_policy_rollout)
-            #end_time = time.perf_counter()
-            #elapsed_time = end_time - start_time
-            #print(f"GAE COMP: {elapsed_time:.4f} seconds")
-
-            #start_time = time.perf_counter()
             batch = self._prepare_batch(advantages, returns) # storing processed rollout in buffer
-            #end_time = time.perf_counter()
-            #elapsed_time = end_time - start_time
-            #print(f"PREPPING: {elapsed_time:.4f} seconds")
-
-            #for i in batch.values():
-            #    print(i.device)
-            #start_time = time.perf_counter()
             self._rollout_buffer.add_batch(batch)
-            #end_time = time.perf_counter()
-            #elapsed_time = end_time - start_time
-            #print(f"ADDING TO BATCH: {elapsed_time:.4f} seconds")
-            
-
             self._curr_policy_rollout = [] # resetting temp rollout storage
         
-        if self._steps_collected_with_curr_policy == self.rollout_steps:
-            #start_time = time.perf_counter()
+        elif self._steps_collected_with_curr_policy >= self.rollout_steps:
             ret = self._perform_update()
-            #end_time = time.perf_counter()
-            #elapsed_time = end_time - start_time
-            #print(f"POLICY UPDATE: {elapsed_time:.4f} seconds")
-
             self._steps_collected_with_curr_policy = 0
             self._policy_iteration += 1
 
@@ -182,10 +159,8 @@ class PPOAgent:
         advantages[T-1] = rewards[T-1] + self.gamma*(1 - dones[T-1])*final_v - values[T-1]
         
         for i in range(T-2, -1, -1):
-            #td = rewards[i] + self.gamma*(1 - dones[i])*values[i+1] - values[i]
             td = rewards[i] + self.gamma*values[i+1] - values[i]
             advantages[i] = td + self.gamma*self.gae_lambda*advantages[i+1]
-            #advantages[i] = td + (1 - dones[i]) * self.gamma*self.gae_lambda*advantages[i+1]
         
         returns = advantages + values
 
