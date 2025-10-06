@@ -129,11 +129,15 @@ class PPOAgent:
         for _ in range(self.update_epochs):
             for _ in range(n_updates_per_epoch):
                 minibatch = self._rollout_buffer.sample(int(self.minibatch_size/2), {"iteration": list(range(1, self._policy_iteration+1))}) # sample from entire RB
-                minibatch_2 = self._rollout_buffer.sample(int(self.minibatch_size/2), {"iteration": [self._policy_iteration]}) # current iter
-                for i in minibatch.keys():
-                    minibatch[i] = minibatch[i] + minibatch_2[i]
-                
                 minibatch['advantages'] = (minibatch['advantages'] - minibatch['advantages'].mean())/(minibatch['advantages'].std() + 1e-8)
+                
+                minibatch_2 = self._rollout_buffer.sample(int(self.minibatch_size/2), {"iteration": [self._policy_iteration]}) # current iter
+                minibatch_2['advantages'] = (minibatch_2['advantages'] - minibatch_2['advantages'].mean())/(minibatch_2['advantages'].std() + 1e-8)
+                
+
+                for i in minibatch.keys():
+                    minibatch[i] = torch.cat((minibatch[i], minibatch_2[i]))
+
                 loss, stats = self._ppo_loss(minibatch)
                 all_stats.append(stats)
 
