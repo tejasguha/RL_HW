@@ -4,7 +4,7 @@ from datetime import datetime
 import numpy as np
 import torch
 import gymnasium as gym
-from ppo_agent import PPOAgent
+from ppo_agent_exp_1_6_1 import PPOAgent
 from sac_agent import SACAgent
 from td3_agent import TD3Agent
 from utils import set_seed, make_env, evaluate_policy, record_eval_video, plot_curves

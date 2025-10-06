@@ -104,6 +104,7 @@ class PPOAgent:
         # ---------------- Problem 1.3.2: PPO Update ----------------
         ### BEGIN STUDENT SOLUTION - 1.3.2 ###
 
+        '''
         n_updates_per_epoch = int(self.rollout_steps / self.minibatch_size)        
 
         for _ in range(self.update_epochs):
@@ -118,10 +119,29 @@ class PPOAgent:
                 loss.backward() # compute grads
                 torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
                 self.optimizer.step() # update weights
-            
+        '''
 
 
         ### EXPERIMENT 1.6 CODE ###
+
+        n_updates_per_epoch = int(self.rollout_steps / self.minibatch_size)        
+
+        for _ in range(self.update_epochs):
+            for _ in range(n_updates_per_epoch):
+                minibatch = self._rollout_buffer.sample(int(self.minibatch_size/2), {"iteration": list(range(1, self._policy_iteration+1))}) # sample from entire RB
+                minibatch_2 = self._rollout_buffer.sample(int(self.minibatch_size/2), {"iteration": [self._policy_iteration]}) # current iter
+                for i in minibatch.keys():
+                    minibatch[i] = minibatch[i] + minibatch_2[i]
+                
+                minibatch['advantages'] = (minibatch['advantages'] - minibatch['advantages'].mean())/(minibatch['advantages'].std() + 1e-8)
+                loss, stats = self._ppo_loss(minibatch)
+                all_stats.append(stats)
+
+                # doing gradient update
+                self.optimizer.zero_grad() # clear grads for next iteration
+                loss.backward() # compute grads
+                torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                self.optimizer.step() # update weights
 
         ### EXPERIMENT 1.6 CODE END ###
     
@@ -200,18 +220,18 @@ class PPOAgent:
         # ---------------- Problem 1.4.2: KL Divergence Policy Loss ----------------
         ### BEGIN STUDENT SOLUTION - 1.4.2 ###
 
-        approx_kl = (old_log_probs - log_probs)
-        ratio = torch.exp(log_probs - old_log_probs)
-        policy_loss = -1 * (ratio*advantages - self.beta * approx_kl).mean()
+        #approx_kl = (old_log_probs - log_probs)
+        #ratio = torch.exp(log_probs - old_log_probs)
+        #policy_loss = -1 * (ratio*advantages - self.beta * approx_kl).mean()
 
         ### END STUDENT SOLUTION - 1.4.2 ###
         
         # ---------------- Problem 1.1.1: PPO Clipped Surrogate Objective Loss ----------------
         ### BEGIN STUDENT SOLUTION - 1.1.1 ###
 
-        #ratio = torch.exp(log_probs - old_log_probs)
-        #ratio_clipped = torch.clamp(ratio, min=1-self.clip_coef, max=1+self.clip_coef)
-        #policy_loss = -1 * torch.minimum(ratio*advantages, ratio_clipped*advantages).mean() # min obj in pytorch
+        ratio = torch.exp(log_probs - old_log_probs)
+        ratio_clipped = torch.clamp(ratio, min=1-self.clip_coef, max=1+self.clip_coef)
+        policy_loss = -1 * torch.minimum(ratio*advantages, ratio_clipped*advantages).mean() # min obj in pytorch
 
         ### END STUDENT SOLUTION - 1.1.1 ###
         
