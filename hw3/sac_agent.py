@@ -36,7 +36,39 @@ class SACAgent:
         
         # ================== Problem 3.1.1: SAC initialization ==================
         ### BEGIN STUDENT SOLUTION - 3.1.1 ###
-        
+        self.actor = Actor(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            act_low=self.act_low,
+            act_high=self.act_high,
+            hidden=(64, 64),
+        ).to(self.device)
+
+        self.critic1 = Critic(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            hidden=(64, 64)
+        ).to(self.device)
+
+        self.critic1_target = Critic(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            hidden=(64, 64)
+        ).to(self.device)
+        self.critic1_target.load_state_dict(self.critic1.state_dict())
+
+        self.critic2 = Critic(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            hidden=(64, 64)
+        ).to(self.device)
+        self.critic2_target = Critic(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            hidden=(64, 64)
+        ).to(self.device)
+        self.critic2_target.load_state_dict(self.critic2.state_dict())
+
         ### END STUDENT SOLUTION  -  3.1.1 ###
         
         # Optimizers
@@ -64,7 +96,7 @@ class SACAgent:
             
             # ---------------- Problem 3.5: Deterministic Action ----------------
             ### BEGIN STUDENT SOLUTION - 3.5 ###
-            
+            # action = self.actor(obs_t).mean_action
             ### END STUDENT SOLUTION  -  3.5 ###
             # Clamp to environment bounds
             action = torch.clamp(action, self.act_low, self.act_high)
@@ -101,6 +133,11 @@ class SACAgent:
         # Check if we should update
         # ---------------- Problem 3.2: Environment Step ----------------
         ### BEGIN STUDENT SOLUTION - 3.2 ###
+        if self.total_steps < self.warmup_steps or self.batch_size > self._buffer.size:
+            return {}
+
+        if self.total_steps % self.update_every != 0:
+            return {}
 
         ### END STUDENT SOLUTION  -  3.2 ###
         
@@ -136,32 +173,65 @@ class SACAgent:
         next_obs = batch["next_obs"]
         dones = batch["dones"]
         
-        entropy = 0.0 # placeholder
-        current_q1 = torch.zeros_like((actions.shape[0],)) # placeholder
-        current_q2 = torch.zeros_like((actions.shape[0],)) # placeholder
-        target_q = torch.zeros_like((actions.shape[0],)) # placeholder
-        actor_loss = torch.tensor(0.0) # placeholder
+
+
+        # entropy = 0.0 # placeholder
+        # current_q1 = torch.zeros_like((actions.shape[0],)) # placeholder
+        # current_q2 = torch.zeros_like((actions.shape[0],)) # placeholder
+        # target_q = torch.zeros_like((actions.shape[0],)) # placeholder
+        # actor_loss = torch.tensor(0.0) # placeholder
         
         # ---------------- Problem 3.1.2: Soft Bellman target ----------------
         ### BEGIN STUDENT SOLUTION - 3.1.2 ###
+        #### IDEK what to put here
+        with torch.no_grad():
+            next_actions_dist = self.actor(next_obs)
+            next_actions = next_actions_dist.rsample()
+            next_q1 = self.critic1_target(next_obs, next_actions)
+            next_q2 = self.critic2_target(next_obs, next_actions)
+            target_q = (rewards+self.gamma*(1-dones)*(torch.min(next_q1,next_q2) - self.alpha * torch.clamp(next_actions_dist.log_prob(next_actions), -20, 20))).detach()
 
         ### END STUDENT SOLUTION  -  3.1.2 ###
         
         # ---------------- Problem 3.1.3: Critic update ----------------
         ### BEGIN STUDENT SOLUTION - 3.1.3 ###
-        
+        current_q1 = self.critic1(obs, actions)
+        current_q2 = self.critic2(obs, actions)
+
+        critic_loss = ((current_q1 - target_q)**2).mean() + ((current_q2 - target_q)**2).mean()
+        self.critic_opt.zero_grad()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), 1.0)
+        self.critic_opt.step()
         ### END STUDENT SOLUTION  -  3.1.3 ###
         
         
         
         # ---------------- Problem 3.1.4: Actor update ----------------
         ### BEGIN STUDENT SOLUTION - 3.1.4 ###
-       
+
+        action_distr = self.actor(obs)
+        entropy = action_distr.entropy().mean().item()
+        sampled_actions = action_distr.rsample()
+
+        current_sampled_q1 = self.critic1(obs, sampled_actions)
+        current_sampled_q2 = self.critic2(obs, sampled_actions)
+
+        actor_loss = (self.alpha * torch.clamp(action_distr.log_prob(sampled_actions), -20, 20) - torch.min(current_sampled_q1, current_sampled_q2)).mean()
+
+        self.actor_opt.zero_grad()
+        actor_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
+        self.actor_opt.step()
+    
         ### END STUDENT SOLUTION  -  3.1.4 ###
         
         # ---------------- Problem 3.1.5: Target soft-updates ---------------
         ### BEGIN STUDENT SOLUTION - 3.1.5 ###
-
+        with torch.no_grad():
+            self._soft_update(self.critic1, self.critic1_target)
+            self._soft_update(self.critic2, self.critic2_target)
         ### END STUDENT SOLUTION  -  3.1.5 ###
         
         # Return stats in format expected by runner
@@ -178,5 +248,7 @@ class SACAgent:
         """Soft update target network parameters"""
         # ---------------- Problem 3.1.5 Helper: Soft update implementation ----------------
         ### BEGIN STUDENT SOLUTION - 3.1.5 HELPER ###
+        for p,tp in zip(local_model.parameters(), target_model.parameters()):
+            tp.data.copy_(self.tau * p.data + (1.0 - self.tau) * tp.data)
 
         ### END STUDENT SOLUTION  -  3.1.5 HELPER ###
