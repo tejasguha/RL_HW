@@ -12,7 +12,7 @@ from PIL import Image
 from diffusers import DDPMScheduler, DDIMScheduler
 import time
 import matplotlib.pyplot as plt
-
+import imageio
 try:
     import wandb
 except ImportError:
@@ -129,6 +129,55 @@ class TrainDiffusionPolicy:
         """
         # BEGIN STUDENT SOLUTION
 
+        timesteps=self.get_inference_timesteps()
+        noisy_actions = torch.randn((1, max_action_len, self.action_dimension), device=self.device)
+
+        # previous_states_batch.shape torch.Size([256, 5, 24])
+        # previous_actions_batch.shape torch.Size([256, 4, 4])
+        # noisy_actions.shape torch.Size([256, 3, 4])
+        # episode_timesteps_batch.shape torch.Size([256, 5])
+        # t.unsqueeze(-1).shape torch.Size([256, 1])
+        # previous_states_padding_batch.shape torch.Size([256, 5])
+        # previous_actions_padding_batch.shape torch.Size([256, 4])
+
+        # previous_states.shape torch.Size([1, 5, 24])
+        # previous_actions.shape torch.Size([1, 4, 4])
+        # noisy_actions.shape torch.Size([1, 3, 4])
+        # episode_timesteps.shape torch.Size([1, 5])
+        # t.unsqueeze(-1).unsqueeze(-1).shape torch.Size([1, 1])
+
+        previous_states = previous_states - torch.tensor(self.states_mean[None, None, :], device=self.device)
+        previous_states = previous_states / torch.tensor(self.states_std[None, None, :], device=self.device)
+        previous_states = previous_states.float()
+
+        previous_actions = previous_actions - torch.tensor(self.actions_mean[None, None, :], device=self.device)
+        previous_actions = previous_actions / torch.tensor(self.actions_std[None, None, :], device=self.device)
+        previous_actions = previous_actions.float()
+
+        episode_timesteps = episode_timesteps.to(self.device).long()
+
+        # ## print all devices
+        # print(f"previous_states.device {previous_states.device}")
+        # print(f"previous_actions.device {previous_actions.device}")
+        # print(f"noisy_actions.device {noisy_actions.device}")
+        # print(f"episode_timesteps.device {episode_timesteps.device}")
+        # print(f"previous_states_padding_mask.device {previous_states_padding_mask.device}")
+        # print(f"previous_actions_padding_mask.device {previous_actions_padding_mask.device}")
+        # print(f"actions_padding_mask.device {actions_padding_mask.device}")
+
+
+
+
+
+        for t in timesteps:
+
+            predicted_noise = self.model(previous_states,previous_actions,noisy_actions,episode_timesteps,t.unsqueeze(-1).unsqueeze(-1), previous_states_padding_mask,previous_actions_padding_mask, actions_padding_mask)
+            noisy_actions = self.inference_scheduler.step(predicted_noise, t.item(), noisy_actions).prev_sample
+
+        predicted_actions = noisy_actions * torch.tensor(self.actions_std[None, None, :], device=self.device) + torch.tensor(self.actions_mean[None, None, :], device=self.device)
+        predicted_actions = predicted_actions.cpu().numpy()[0]
+        predicted_actions = np.clip(predicted_actions, -self.clip_sample_range, self.clip_sample_range)
+
         # END STUDENT SOLUTION
         return predicted_actions
 
@@ -138,7 +187,7 @@ class TrainDiffusionPolicy:
         num_actions_to_eval_in_a_row=3, 
         num_previous_states=5,
         num_previous_actions=4, 
-        render=False,
+        render=True,
     ):
         """
         run a trajectory using the trained model
@@ -157,9 +206,43 @@ class TrainDiffusionPolicy:
         """
         rewards, rgbs = np.zeros((self.max_trajectory_length,)), []
         # BEGIN STUDENT SOLUTION
+        with torch.no_grad():
+            s,a,t,done,truncated = [env.reset()],[],[0],False,False
+            states = torch.tensor(s[0][0], device=self.device)
+            actions = torch.tensor(a, device=self.device)
+            timesteps = torch.tensor(t).unsqueeze(0).repeat(1,num_previous_states)
+            state_padding = torch.zeros((num_previous_states-1, self.state_dimension), device=self.device)
+            actions = torch.zeros((num_previous_actions, self.action_dimension), device=self.device)[None,:,:]
+            states = torch.cat((state_padding, states.unsqueeze(0)), dim=0)[None,:,:]
+
+            state_padding_mask = torch.ones(num_previous_states-1, dtype=torch.bool, device=self.device)[None,:]
+            state_padding_mask = torch.cat((state_padding_mask, torch.zeros((1,1), dtype=torch.bool, device=self.device)), dim=1)==1
+            action_padding_mask = torch.ones(num_previous_actions, dtype=torch.bool, device=self.device)[None,:]==1
+            ct=0
+            while not (done or truncated):
+                next_actions = self.diffusion_sample(states, actions, timesteps, state_padding_mask, action_padding_mask, None, max_action_len=num_actions_to_eval_in_a_row)
+                for _ in range(num_actions_to_eval_in_a_row):
+                    if done or truncated:
+                        break
+                    current_action = next_actions[0]
+                    s2, r, done, truncated, info = env.step(current_action)
+                    if render:
+                        rgb = env.render()
+                        rgbs.append(rgb)
+                    rewards[ct] = r
+                    ct=ct+1
+
+                    next_actions = next_actions[1:]
+                    actions = torch.cat((torch.tensor(actions[:,1:,:], device=self.device), torch.tensor(current_action, device=self.device).unsqueeze(0).unsqueeze(0)), dim=1)
+                    states = torch.cat((states[:,1:,:], torch.tensor(s2, device=self.device).unsqueeze(0).unsqueeze(0)), dim=1)
+                    timesteps = torch.cat((timesteps[:,1:], (timesteps[:,-1] + 1).unsqueeze(0)), dim=1)
+                    state_padding_mask = torch.cat((state_padding_mask[:,1:], torch.zeros((1,1), dtype=torch.bool, device=self.device)==1), dim=1)
+                    action_padding_mask = torch.cat((action_padding_mask[:,1:], torch.zeros((1,1), dtype=torch.bool, device=self.device)==1), dim=1)
+
+                    
 
         # END STUDENT SOLUTION
-        return rewards,
+        return rewards, rgbs
 
     def evaluation(
         self,
@@ -189,7 +272,8 @@ class TrainDiffusionPolicy:
         os.makedirs("data/diffusion_policy_trajectories", exist_ok=True)
         for sample_trajectory in tqdm(range(num_samples)):
             time1 = time.time()
-            reward, _ = self.sample_trajectory(self.env, num_actions_to_eval_in_a_row=num_actions_to_eval_in_a_row)
+            reward, rgbs = self.sample_trajectory(self.env, num_actions_to_eval_in_a_row=num_actions_to_eval_in_a_row)
+            imageio.mimsave(f'gifs_diffusion.gif', rgbs, fps=33)
             time2 = time.time()
             print(f"trajectory {sample_trajectory} took {time2 - time1} seconds")
             rewards[sample_trajectory] = reward
@@ -252,6 +336,7 @@ class TrainDiffusionPolicy:
             plt.savefig("data/diffusion_policy_transformer_models/diffusion_policy_loss.png")
             print(f"final loss={losses[-1]}")
 
+        
         return losses
 
     def training_step(self, batch_size):
@@ -267,6 +352,30 @@ class TrainDiffusionPolicy:
         NOTE: return a loss value that is a plain float (not a tensor), and is on cpu
         """
         # BEGIN STUDENT SOLUTION
+        previous_states_batch, previous_actions_batch, actions_batch, episode_timesteps_batch, previous_states_padding_batch, previous_actions_padding_batch, actions_padding_batch = self.get_training_batch(batch_size)
+        eps = torch.randn_like(actions_batch)
+        t = torch.randint(0, self.num_train_diffusion_timesteps, (batch_size,), device=self.device).long()
+        noisy_actions = self.training_scheduler.add_noise(actions_batch, eps, t)
+
+        # previous_states_batch.shape torch.Size([256, 5, 24])
+        # previous_actions_batch.shape torch.Size([256, 4, 4])
+        # noisy_actions.shape torch.Size([256, 3, 4])
+        # episode_timesteps_batch.shape torch.Size([256, 5])
+        # t.unsqueeze(-1).shape torch.Size([256, 1])
+        # previous_states_padding_batch.shape torch.Size([256, 5])
+        # previous_actions_padding_batch.shape torch.Size([256, 4])
+
+
+        predicted_noise = self.model(previous_states_batch,previous_actions_batch,noisy_actions,episode_timesteps_batch,t.unsqueeze(-1), previous_states_padding_batch,previous_actions_padding_batch, actions_padding_batch)
+        correct_dim_actions_padding_batch = actions_padding_batch.unsqueeze(-1).repeat(1,1,self.action_dimension)
+        loss = (((eps-predicted_noise)*(~correct_dim_actions_padding_batch))**2)
+        loss = loss.sum() / (~correct_dim_actions_padding_batch).sum()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+
+        loss = loss.cpu().item()
 
         # END STUDENT SOLUTION
 
@@ -373,12 +482,39 @@ def run_training():
     with open(f"data/actions_BC.pkl", "rb") as f:
         actions = pickle.load(f)
     # BEGIN STUDENT SOLUTION
-    trainer = TrainDiffusionPolicy(...)
-    # END STUDENT SOLUTION
+    model = PolicyDiffusionTransformer(
+        state_dim=env.observation_space.shape[0],
+        act_dim=env.action_space.shape[0],
+        num_transformer_layers=6,
+        hidden_size=128,
+        n_transformer_heads=1,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.00005, weight_decay=0.001)
+
+    trainer=TrainDiffusionPolicy(
+        env=env,
+        model=model,
+        optimizer=optimizer,
+        states_array=states,
+        actions_array=actions,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+    )
+    trainer.train(
+        num_training_steps=50000, 
+        batch_size=256, 
+        save_every=50000, 
+    )
     trainer.evaluation(num_samples=30)
+
+    # # END STUDENT SOLUTION
+    trainer.evaluation(num_samples=20, num_actions_to_eval_in_a_row=3)
+    trainer.evaluation(num_samples=20, num_actions_to_eval_in_a_row=2)
+    trainer.evaluation(num_samples=20, num_actions_to_eval_in_a_row=1)
+
     traj_reward = 0
     while traj_reward < 240:
-        rewards, rgbs = trainer.run_trajectory(trainer.env, num_actions_to_eval_in_a_row=3, render=True)
+        rewards, rgbs = trainer.sample_trajectory(trainer.env, num_actions_to_eval_in_a_row=3, render=True)
         traj_reward = rewards.sum()
         print(f"got trajectory with reward {traj_reward}")
     imageio.mimsave(f'gifs_diffusion.gif', rgbs, fps=33)
