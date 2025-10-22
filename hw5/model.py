@@ -65,9 +65,12 @@ class PENN(nn.Module):
         return mean, logvar
 
     def get_loss(self, targ, mean, logvar):
-        # TODO: write your code here
 
-        raise NotImplementedError
+        # note logvar is a diagonal mat
+        logvar = torch.clamp(logvar, -5, 5)
+        diff = targ - mean
+        action_dim = targ.shape[1]
+        return torch.mean(torch.sum(diff**2 * torch.exp(-logvar) + logvar + action_dim * np.log(2*np.pi), axis=-1))
 
     def create_network(self, n):
         layer_sizes = [
@@ -96,6 +99,31 @@ class PENN(nn.Module):
             List containing the average loss of all the networks at each train iteration
 
         """
-        # TODO: write your code here
 
-        raise NotImplementedError
+        average_loss = []
+        for _ in range(num_train_itrs):
+
+            avg_loss = 0
+
+            for model_index in range(self.num_nets):
+                perm = torch.randperm(inputs.shape[0])
+                batch = torch.tensor(inputs[perm[:batch_size]], dtype=torch.float32).to(self.device)
+                batch_targets = torch.tensor(targets[perm[:batch_size]], dtype=torch.float32).to(self.device)
+
+                curr_model = self.networks[model_index]
+                self.opt.zero_grad()
+                model_mean, model_logvar = self.get_output(curr_model(batch))
+                loss = self.get_loss(batch_targets, model_mean, model_logvar)
+                avg_loss += loss
+                loss.backward()
+                self.opt.step()
+            
+            avg_loss = (avg_loss / self.num_nets).detach().numpy()
+            average_loss.append(avg_loss)
+        
+        return average_loss
+            
+                
+
+                
+        

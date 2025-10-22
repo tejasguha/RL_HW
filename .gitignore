@@ -2,3 +2,7 @@
 *.mp4
 *.pt
 hw3/runs/
+graphs/cma_es_cartpole.png
+graphs/cma_es_dummy.png
+*.txt
+*png

@@ -3,6 +3,7 @@ import torch
 from cem import CEMOptimizer
 from randopt import RandomOptimizer
 import logging
+import random
 
 log = logging.getLogger("root")
 
@@ -161,13 +162,35 @@ class MPC:
         # REMEMBER: model prediction is delta
         # Next state = delta sampled from model prediction + CURRENT state!
 
-        raise NotImplementedError
+        actions_rep = np.repeat(actions, repeats = self.num_particles, axis=0)
+        nxt_states = np.empty_like(states, dtype=np.float32)
+        model_indices = np.random.randint(0, self.model.num_nets, size=states.shape[0])
+
+        s = torch.from_numpy(states)
+        a = torch.from_numpy(actions_rep) 
+        x = torch.cat([s, a], dim=-1).to(torch.float32)
+
+        nxt_states = torch.empty_like(s)
+
+        with torch.no_grad():
+            for i in range(self.model.num_nets):
+                mask = (model_indices == i)
+                x_i = x[mask]
+
+                curr_net = self.model.networks[model_indices[i]]
+                mean, logvar = self.model.get_output(curr_net(x_i))
+
+                delta = mean + torch.randn_like(mean) * torch.exp(0.5 * logvar)
+
+                nxt_states[mask] = s[mask] + delta
+        
+        return nxt_states.detach().cpu().numpy()
 
     def predict_next_state_gt(self, states, actions):
         """Given a list of state action pairs, use the ground truth dynamics to predict the next state"""
 
         nxt_states = []
-        for (state, action)  in zip(states, actions):
+        for (state, action) in zip(states, actions):
             self.env.set_state(state)
             nxt_state = self.env.get_nxt_state(state, action)
             nxt_states.append(nxt_state)
