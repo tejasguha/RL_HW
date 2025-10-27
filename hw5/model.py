@@ -69,8 +69,9 @@ class PENN(nn.Module):
         # note logvar is a diagonal mat
         logvar = torch.clamp(logvar, -5, 5)
         diff = targ - mean
-        action_dim = targ.shape[1]
-        return torch.mean(torch.sum(diff**2 * torch.exp(-logvar) + logvar + action_dim * np.log(2*np.pi), axis=-1))
+        state_dim = targ.shape[1]
+        per_sample = torch.sum(diff**2 * torch.exp(-logvar) + logvar + state_dim*np.log(2*np.pi), axis=-1)
+        return torch.mean(per_sample)
 
     def create_network(self, n):
         layer_sizes = [

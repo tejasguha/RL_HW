@@ -6,6 +6,7 @@ import td3
 import replay_buffer
 import envs  # This is needed to register the environment
 import matplotlib.pyplot as plt
+import random
 
 from model import PENN
 from run import LR, STATE_DIM
@@ -31,7 +32,7 @@ class TrainerTD3:
         self.expl_noise = expl_noise
 
         self.model = PENN(num_nets, STATE_DIM, self.action_dim, LR, device=device)
-        self.model.load_state_dict(torch.load("model.pt"))
+        self.model.load_state_dict(torch.load("model.pt", map_location=torch.device('cpu')))
 
         # Set seeds
         self.env.seed(seed)
@@ -73,7 +74,15 @@ class TrainerTD3:
     def get_synthetic_transition(self, state, action):
         # TODO: write your code here
         # randomly choose a network from ensemble and get new state from it
-        new_state = ...
+        curr_network = self.model.networks[random.randint(0, self.model.num_nets-1)]
+        s = torch.from_numpy(state)
+        a = torch.from_numpy(action) 
+        x = torch.cat([s[:8], a], dim=-1).to(torch.float32)
+        x = torch.unsqueeze(x, dim=0)
+        mean, logvar = self.model.get_output(curr_network(x))
+        delta = mean + torch.randn_like(mean) * torch.exp(0.5 * logvar)
+        next_state = torch.squeeze(torch.unsqueeze(s[:8], dim=0) + delta)
+        new_state = torch.cat((next_state, s[8:]))
         return self.env.step_state(
             new_state.tolist()
         )  # pass in new state to the env for the full transition
