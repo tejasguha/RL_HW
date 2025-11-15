@@ -269,7 +269,40 @@ class TD3Agent:
         # Note: elf.cql_n_actions indicates how many random actions to sample for each element in the batch.
 
         ### BEGIN STUDENT SOLUTION - 2.1 ###
-        raise NotImplementedError()  # Remove this line when implementing the solution
+        q_pred = self.critic1(obs, batch["actions"])
+        random_actions = torch.rand(
+            (batch_size, self.cql_n_actions, self.act_dim), device=self.device
+        ) * (self.act_high - self.act_low) + self.act_low
+        next_action_q1_values = torch.zeros(
+            (batch_size, self.cql_n_actions), device=self.device
+        )        
+        for i in range(self.cql_n_actions):
+            current_action_q1_values[:, i] = self.critic1(
+                obs, self.actor(obs).rsample()
+            ).squeeze()
+            random_action_q1_values[:, i] = self.critic1(
+                obs, random_actions[:, i, :]
+            ).squeeze()
+            next_action_q1_values[:, i] = self.critic1(
+                next_obs, self.actor(next_obs).rsample()
+            ).squeeze()
+        cql_loss = (
+            torch.logsumexp(
+                torch.cat(
+                    [
+                        current_action_q1_values,
+                        random_action_q1_values,
+                        next_action_q1_values,
+                    ],
+                    dim=1,
+                )
+                / self.cql_temp,
+                dim=1,
+            ).mean()
+            * self.cql_temp
+            - q_pred.mean()
+        )
+
         ### END STUDENT SOLUTION - 2.1 ###
 
         return cql_loss, {
